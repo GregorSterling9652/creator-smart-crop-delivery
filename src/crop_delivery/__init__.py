@@ -1,0 +1,2 @@
+"""Smart-crop delivery example."""
+
