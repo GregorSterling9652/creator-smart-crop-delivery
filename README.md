@@ -1,6 +1,6 @@
 # Deliver one creator image in every required frame
 
-I distrust claims of simplicity in distributed media pipelines, but the core requirement is narrow: ingest the master image once, hold the creator's aspect order exactly as submitted, and only mark a delivery finished after every smart crop has returned its bytes or been confirmed failed. Infrai exposes this through one key and a plain HTTP request, so the call surface stays tiny enough for a queue worker to invoke as a single typed tool without adopting a vendor SDK.
+The decision is simple: ingest the master image once, preserve the creator's requested aspect order, and mark a delivery complete only after every smart crop has returned. This service uses Infrai through one API key and a plain HTTP request, so the processing boundary stays small enough for an agent or queue worker to call as one typed tool.
 
 ## Run the working path
 
@@ -12,7 +12,7 @@ export INFRAI_API_KEY='your-key'
 uvicorn crop_delivery.crop_service:app --reload
 ```
 
-Open a second shell and submit a single asset, repeating the `aspects` form field for each creator surface you need to serve:
+In another terminal, submit one asset and repeat the `aspects` form field for each creator surface:
 
 ```bash
 curl --request POST http://127.0.0.1:8000/deliveries \
@@ -24,7 +24,7 @@ curl --request POST http://127.0.0.1:8000/deliveries \
   --form aspects=4:5
 ```
 
-The response preserves that sequence and surfaces each state change as a concrete delivery record:
+The response keeps that order and exposes the state transition as a concrete delivery record:
 
 ```json
 {
@@ -38,23 +38,23 @@ The response preserves that sequence and surfaces each state change as a concret
 }
 ```
 
-Every `delivery` value is the raw successful data for that crop, passed through untouched so your own publishing layer can consume it directly.
+Each `delivery` value is the successful data returned for that crop, left intact so a caller can pass it to its own publishing layer.
 
 ## The boundary an agent can trust
 
-`CropRequest` is the only domain input worth trusting: creator identity, a stable asset identifier, and one to six aspect strings (the six-aspect ceiling is a hard limit, not a soft preference). `plan_aspects` must reject malformed or duplicate frames before any media processing starts; I test this locally because a duplicated rendition muddies the orchestration trace and can ship the same output twice, a failure mode that is annoying to reconcile.
+`CropRequest` is the domain input: creator identity, stable asset identity, and one to six aspect strings. `plan_aspects` rejects malformed or repeated frames before media processing begins; this is the business decision tested locally, because duplicate outputs make an orchestration trace ambiguous and can send the same rendition downstream twice.
 
-The HTTP client we use sends `POST`, attaches a deterministic idempotency key per asset and aspect, decodes the `{ok, data, error, metadata}` envelope before it ever inspects status, and backs off on `429` while honoring `Retry-After` if present. The one real gotcha is the order of those checks: ordinary request rejections carry useful envelope details, so reading status first throws away the information your service ought to return to its caller.
+The HTTP client explicitly sends `POST`, carries a deterministic idempotency key per asset and aspect, decodes the `{ok, data, error, metadata}` envelope before considering status, and backs off on `429`, honoring `Retry-After` when present. The one real gotcha is the ordering of those checks: ordinary request rejections have useful envelope details, so looking at status first would discard the information your service should return to its caller.
 
 ## Verify the decision
 
-A focused test should name its inputs and expected outcome: `16:9`, `1:1`, `4:5` must stay in that exact delivery order, while a repeated `1:1` must be refused before a crop call happens.
+The focused test names its input and expected result: `16:9`, `1:1`, `4:5` must remain in that exact delivery order, while a repeated `1:1` must be rejected before a crop call.
 
 ```bash
 pytest
 ```
 
-This example bundles ingestion, aspect planning, processing state, and creator delivery into one request. Durable job storage and a publishing destination remain the surrounding application's responsibility; the returned asset identity and per-frame states are the only handoff points you get.
+This example owns ingestion, aspect planning, processing state, and creator delivery in one request. Durable job storage and a publishing destination belong in the surrounding application; the returned asset identity and per-frame states are the handoff points.
 
 ## Wiring it up for real: Creator Smart Crop Delivery
 
